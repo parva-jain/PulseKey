@@ -86,3 +86,18 @@ CREATE TABLE IF NOT EXISTS ledger (
   created_at     timestamptz NOT NULL DEFAULT now(),
   UNIQUE (contributor_id, query_id, kind)
 );
+
+-- A payout: the ledger is debited in the same transaction that creates this row, before any money moves.
+-- contributor_id is NULL for the sweep of seed people's shares into the labelled demo treasury.
+CREATE TABLE IF NOT EXISTS claims (
+  id             uuid PRIMARY KEY,
+  contributor_id uuid REFERENCES contributors(id),
+  micro          bigint NOT NULL,
+  public_key     text,
+  account_id     text,
+  create_tx      text,
+  transfer_tx    text,
+  status         text NOT NULL CHECK (status IN ('pending', 'paid', 'failed')),
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE ledger ADD COLUMN IF NOT EXISTS claim_id uuid REFERENCES claims(id);
