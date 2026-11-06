@@ -21,8 +21,9 @@ async function run(name: string, fn: () => Promise<unknown>) {
 
 await run("1_sealed_basic", () => sealedChat(zg, { messages: [{ role: "user", content: "Say the word ready." }], max_tokens: 200 }));
 await run("2_sealed_verify_tee", () => sealedChat(zg, { messages: [{ role: "user", content: "Say the word ready." }], max_tokens: 200, verify_tee: true }));
-await run("3_schema_64_tokens", async () => {
-  const r = await sealedChat(zg, { messages: prompt, max_tokens: 64, response_format: answerSchema(LABELS) });
+await run("3_schema_64_tokens_thinking_on", async () => {
+  // Expected to come back empty: thinking spends the 64 tokens. Kept to show why the default is off.
+  const r = await sealedChat(zg, { messages: prompt, max_tokens: 64, response_format: answerSchema(LABELS), chat_template_kwargs: { enable_thinking: true } });
   return { ...r, parsed: parseLabel(r.content, LABELS) };
 });
 await run("4_schema_thinking_off", async () => {

@@ -38,10 +38,12 @@ type ChatBody = {
 };
 
 // Refuses any answer that did not take the sealed path. Never logs messages or content.
+// Thinking is off unless the caller turns it on: with it on, short budgets are spent on reasoning and the
+// answer comes back empty (seen live on 2026-11-06 at 64 and 200 tokens).
 export async function sealedChat(zg: OpenAI, body: ChatBody, model = ZG_MODEL): Promise<SealedResult> {
   const started = Date.now();
   const { data, response } = await zg.chat.completions
-    .create({ model, temperature: 0, stream: false, ...body } as any)
+    .create({ model, temperature: 0, stream: false, chat_template_kwargs: { enable_thinking: false }, ...body } as any)
     .withResponse();
   const sealed = response.headers.get("x-0g-e2ee") === "sealed";
   if (!sealed) throw new NotSealedError(`x-0g-e2ee=${response.headers.get("x-0g-e2ee")}`);
@@ -51,6 +53,7 @@ export async function sealedChat(zg: OpenAI, body: ChatBody, model = ZG_MODEL): 
     requestId: trace.request_id ?? null,
     provider: trace.provider ?? null,
     sealed,
+    // The router's trace carries no TEE verdict today (only billing, provider, request_id), so this stays null.
     teeVerified: typeof trace.tee_verified === "boolean" ? trace.tee_verified : null,
     costMicroUsd: trace.billing?.total_cost_usd_micro ?? null,
     latencyMs: Date.now() - started,
