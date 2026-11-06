@@ -101,3 +101,26 @@ CREATE TABLE IF NOT EXISTS claims (
   created_at     timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE ledger ADD COLUMN IF NOT EXISTS claim_id uuid REFERENCES claims(id);
+
+-- A sign-in or re-check in flight. Bound to the browser by a cookie holding the state; used once.
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  state        text PRIMARY KEY,
+  nonce        text NOT NULL,
+  verifier     text NOT NULL,
+  expected_iss text,
+  expected_sub text,
+  return_to    text NOT NULL,
+  created_at   double precision NOT NULL,
+  status       text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'used'))
+);
+
+-- Contributor sessions. Only a hash of the cookie is stored. checked_at is the last passed identity check,
+-- which gates anything that widens sharing or moves money.
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash     text PRIMARY KEY,
+  contributor_id uuid NOT NULL REFERENCES contributors(id) ON DELETE CASCADE,
+  provider       text NOT NULL,
+  checked_at     timestamptz NOT NULL,
+  expires_at     timestamptz NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
