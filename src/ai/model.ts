@@ -10,6 +10,8 @@ export type ChatRequest = {
   messages: OpenAI.Chat.ChatCompletionMessageParam[];
   max_tokens: number;
   response_format?: unknown;
+  /** Lets the model reason before answering. Needs a far larger max_tokens, or the reply comes back empty. */
+  thinking?: boolean;
 };
 
 export interface SealedModel {
@@ -25,7 +27,8 @@ export function zgModel(): SealedModel {
   return {
     name: "0g",
     async chat(req) {
-      const r = await sealedChat(zg, req);
+      const { thinking, ...body } = req;
+      const r = await sealedChat(zg, { ...body, chat_template_kwargs: { enable_thinking: !!thinking } });
       return { content: r.content, requestId: r.requestId, provider: r.provider, model: ZG_MODEL, costMicroUsd: r.costMicroUsd === null ? null : Number(r.costMicroUsd) };
     },
   };

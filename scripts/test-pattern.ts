@@ -48,7 +48,7 @@ test("route 3: one sealed read per person, of only the two metrics, with nights 
     const data = String(c.messages[1].content);
     assert.ok(!/\d{4}-\d{2}-\d{2}/.test(data), "no dates reach the model");
     const row = JSON.parse(data.replace("DATA:\n", ""))[0];
-    assert.deepEqual(Object.keys(row).sort(), ["hrv_ms", "night", "sleep_minutes"], "only the two metrics asked about");
+    assert.deepEqual(Object.keys(row).sort(), ["leading_before_z", "night", "outcome_z"], "only the two metrics asked about, as z-scores against the person's own average");
   }
   assert.equal(res.sealedReads, n);
   assert.equal(res.proof.requestIds.length, n);

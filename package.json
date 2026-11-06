@@ -4,8 +4,9 @@
   "type": "module",
   "scripts": {
     "test:0g": "tsx --env-file=.env scripts/test-0g.ts",
-    "test": "tsx --test scripts/test-pool.ts scripts/test-query.ts scripts/test-payouts.ts scripts/test-contributor-api.ts scripts/test-ring.ts scripts/test-pattern.ts",
-    "serve": "tsx --env-file=.env scripts/serve.ts"
+    "test": "tsx --test scripts/test-pool.ts scripts/test-query.ts scripts/test-payouts.ts scripts/test-contributor-api.ts scripts/test-ring.ts scripts/test-pattern.ts scripts/test-eval.ts",
+    "serve": "tsx --env-file=.env scripts/serve.ts",
+    "eval": "tsx --env-file=.env scripts/eval-classifier.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.16",

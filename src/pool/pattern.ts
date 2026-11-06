@@ -19,6 +19,12 @@ export const PATTERN_MIN_DAYS = 14;
 const MIN_RANGE_DAYS = 14, MAX_RANGE_DAYS = 120;
 const READ_CONCURRENCY = Number(process.env.READ_CONCURRENCY ?? 8);
 const QUOTE_TTL_MS = 10 * 60_000;
+// Measured on planted data (scripts/eval-classifier.ts): with thinking off the model answered "no" to everyone.
+const CLASSIFIER_THINKING = (process.env.CLASSIFIER_THINKING ?? "0") === "1";
+// "aligned": plain code only reshapes the series (no decision): each row pairs a night's outcome with the leading
+// metric on the nights before it, both as z-scores against the person's own average. "raw": the plain series.
+const CLASSIFIER_INPUT = process.env.CLASSIFIER_INPUT ?? "aligned";
+const CLASSIFIER_MAX_TOKENS = Number(process.env.CLASSIFIER_MAX_TOKENS ?? (CLASSIFIER_THINKING ? 4000 : 64));
 
 export type Template = { id: "lead_lag_v1"; leading: Metric; leadDirection: "falls" | "rises"; outcome: Metric; outcomeDirection: "falls" | "rises"; lagNights: 1 | 2 | 3 };
 export type PatternSpec = { route: "pattern"; template: Template; from: string; to: string };
@@ -89,7 +95,7 @@ export function buildClassifierPrompt(t: Template, rows: Record<string, number>[
 }
 
 /** The two metrics on nights that have both, keyed by night offset. Plaintext exists only inside this call. */
-async function jointRows(db: Db, kek: Buffer, spec: PatternSpec, id: string) {
+export async function jointRows(db: Db, kek: Buffer, spec: PatternSpec, id: string) {
   const { leading, outcome } = spec.template;
   const ma = METRICS[leading], mb = METRICS[outcome];
   const key = await personKey(db, kek, id);
@@ -110,14 +116,41 @@ async function jointRows(db: Db, kek: Buffer, spec: PatternSpec, id: string) {
     .map(([day, r]) => ({ night: Math.round((Date.parse(`${day}T00:00:00Z`) - start) / 86_400_000), [leading]: r[leading], [outcome]: r[outcome] }));
 }
 
-type Read = { answer: Answer; valid: boolean; saved: boolean; requestIds: string[]; provider: string | null; model: string | null };
+export type Read = { answer: Answer; valid: boolean; saved: boolean; requestIds: string[]; provider: string | null; model: string | null };
+
+/** Rows for the "aligned" input: outcome on night t next to the leading metric over the lag nights before t. */
+export function alignRows(t: Template, rows: Record<string, number>[]) {
+  const z = (metric: string) => {
+    const v = rows.map(r => r[metric]);
+    const m = v.reduce((a, b) => a + b, 0) / v.length;
+    const sd = Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length) || 1;
+    return new Map(rows.map(r => [r.night, Number(((r[metric] - m) / sd).toFixed(1))]));
+  };
+  const lead = z(t.leading), out = z(t.outcome);
+  const pick = t.leadDirection === "falls" ? Math.min : Math.max; // the most extreme leading value in the window
+  const aligned: Record<string, number>[] = [];
+  for (const [night, o] of out) {
+    const before = Array.from({ length: t.lagNights }, (_, k) => lead.get(night - 1 - k)).filter((v): v is number => v !== undefined);
+    if (before.length === t.lagNights) aligned.push({ night, outcome_z: o, leading_before_z: pick(...before) });
+  }
+  return aligned;
+}
+
+export function buildAlignedPrompt(t: Template, rows: Record<string, number>[]) {
+  const word = (d: string) => (d === "falls" ? "low (z below -1)" : "high (z above 1)");
+  return [
+    { role: "system" as const, content: `You classify one person's numeric wearable series. Each DATA row is one night: "outcome_z" is "${t.outcome}" that night and "leading_before_z" is the most extreme "${t.leading}" over the ${t.lagNights} night(s) before it, both as z-scores against this person's own average. Answer "yes" if nights with ${word(t.outcomeDirection)} outcome_z mostly have ${word(t.leadDirection)} leading_before_z, clearly more often than other nights do. Answer "no" if leading_before_z looks the same before those nights as before other nights. Answer "unclear" if there are fewer than 3 such nights or the evidence is mixed. Reply with JSON only: {"answer":"yes"|"no"|"unclear"}.` },
+    { role: "user" as const, content: "DATA:\n" + JSON.stringify(rows) },
+  ];
+}
 
 /** Up to three tries for a well-formed answer; after that the person counts as unclear and nothing is saved. */
-async function classify(model: SealedModel, spec: PatternSpec, rows: Record<string, number>[]): Promise<Read> {
+export async function classify(model: SealedModel, spec: PatternSpec, rows: Record<string, number>[]): Promise<Read> {
   const requestIds: string[] = [];
   let provider: string | null = null, used: string | null = null;
   for (let i = 0; i < 3; i++) {
-    const r = await model.chat({ messages: buildClassifierPrompt(spec.template, rows), max_tokens: 64, response_format: answerSchema(ANSWERS) });
+    const messages = CLASSIFIER_INPUT === "aligned" ? buildAlignedPrompt(spec.template, alignRows(spec.template, rows)) : buildClassifierPrompt(spec.template, rows);
+    const r = await model.chat({ messages, max_tokens: CLASSIFIER_MAX_TOKENS, response_format: answerSchema(ANSWERS), thinking: CLASSIFIER_THINKING });
     if (r.requestId) requestIds.push(r.requestId);
     provider = r.provider;
     used = r.model;
