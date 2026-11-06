@@ -148,3 +148,20 @@ test("seed shares sweep to the treasury in one transfer, and only once", async (
   assert.equal(await sweepSeedShares(db, chain, "0.0.4242"), null);
   assert.equal(await balanceMicro(db, real), realOwed, "the real person's share is untouched");
 });
+
+test("a payer for the logged buyer account cannot be built without the log", async () => {
+  const { buildPayingFetch } = await import("../src/x402/agent.js");
+  const saved = { topic: process.env.HCS_TOPIC_ID, buyer: process.env.BUYER_ACCOUNT_ID };
+  process.env.HCS_TOPIC_ID = "0.0.1";
+  process.env.BUYER_ACCOUNT_ID = "0.0.2";
+  try {
+    const key = PrivateKey.generateECDSA() as any;
+    assert.throws(() => buildPayingFetch({ accountId: "0.0.2", key, maxSpendMicro: 1n }), /public spending log/);
+    assert.doesNotThrow(() => buildPayingFetch({ accountId: "0.0.3", key, maxSpendMicro: 1n }), "other accounts are not affected");
+  } finally {
+    process.env.HCS_TOPIC_ID = saved.topic;
+    process.env.BUYER_ACCOUNT_ID = saved.buyer;
+    if (saved.topic === undefined) delete process.env.HCS_TOPIC_ID;
+    if (saved.buyer === undefined) delete process.env.BUYER_ACCOUNT_ID;
+  }
+});

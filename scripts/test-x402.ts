@@ -5,7 +5,7 @@ import { decodePaymentResponseHeader } from "@x402/fetch";
 import { PrivateKey } from "@x402/hedera";
 import { generatePaymentId } from "@x402/extensions/payment-identifier";
 import { createApp, hashscanUrl } from "../src/x402/server.js";
-import { buildPayingFetch } from "../src/x402/agent.js";
+import { buildPayingFetch, openSpendLog } from "../src/x402/agent.js";
 import { usdcMicroBalance } from "../src/hedera/accounts.js";
 
 const FAC = process.env.FACILITATOR_URL ?? "https://x402.org/facilitator";
@@ -37,14 +37,15 @@ try {
     log("balances_before", { buyer: before.buyer.toString(), study: before.study.toString() });
     if (before.buyer < 5_020_000n) throw new Error("buyer needs at least 5.02 USDC");
     const key = PrivateKey.fromStringECDSA(process.env.BUYER_PRIVATE_KEY!);
-    const quotePay = buildPayingFetch({ accountId: buyer, key, maxSpendMicro: 25_000_000n, allowPayTo: [study] }) as typeof fetch;
+    const audit = (await openSpendLog(buyer, key, { asset: "0.0.429274", maxSessionMicro: "25000000", maxPerPaymentMicro: "5000000", allowPayTo: [study] }))?.log;
+    const quotePay = buildPayingFetch({ accountId: buyer, key, maxSpendMicro: 25_000_000n, allowPayTo: [study], audit }) as typeof fetch;
     const q = await quotePay(`${BASE}/quote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: "Does HRV fall before poor sleep?" }) });
     const qr = decodePaymentResponseHeader(q.headers.get("payment-response")!) as any;
     log("paid_quote", { status: q.status, receipt: qr, hashscan: qr?.transaction ? hashscanUrl(qr.transaction) : null });
     log("quote_on_ledger", qr?.transaction ? await mirrorTx(qr.transaction) : null);
 
     const id = generatePaymentId();
-    const studyPay = buildPayingFetch({ accountId: buyer, key, maxSpendMicro: 25_000_000n, allowPayTo: [study], paymentId: () => id }) as typeof fetch;
+    const studyPay = buildPayingFetch({ accountId: buyer, key, maxSpendMicro: 25_000_000n, allowPayTo: [study], paymentId: () => id, audit }) as typeof fetch;
     const body = JSON.stringify({ quoteId: "test", budgetUsd: "5.00", spec: { template: "test" } });
     const s = await studyPay(`${BASE}/studies`, { method: "POST", headers: { "content-type": "application/json" }, body });
     const sText = await s.text();

@@ -11,7 +11,7 @@ const { openDb } = await import("../src/db/index.js");
 const { createApi } = await import("../src/api/app.js");
 const { seedPool } = await import("../src/pool/seed.js");
 const { today } = await import("../src/pool/store.js");
-const { buildPayingFetch, runAgent } = await import("../src/x402/agent.js");
+const { buildPayingFetch, openSpendLog, runAgent } = await import("../src/x402/agent.js");
 const { usdcMicroBalance } = await import("../src/hedera/accounts.js");
 const { hashscanUrl, mirrorConfirms } = await import("../src/x402/server.js");
 
@@ -30,7 +30,9 @@ const server = createApi(db, kek, new HTTPFacilitatorClient({ url: FAC, timeoutM
 
 const key = PrivateKey.fromStringECDSA(process.env.BUYER_PRIVATE_KEY!);
 const session = { spent: 0n };
-const payFetch = (pid: string) => buildPayingFetch({ accountId: buyer, key, maxSpendMicro: 5_000_000n, session, allowPayTo: [payTo], paymentId: () => pid }) as typeof fetch;
+const audit = await openSpendLog(buyer, key, { asset: "0.0.429274", maxSessionMicro: "5000000", maxPerPaymentMicro: "5000000", allowPayTo: [payTo] });
+session.spent = audit?.spent ?? 0n;
+const payFetch = (pid: string) => buildPayingFetch({ accountId: buyer, key, maxSpendMicro: 5_000_000n, session, allowPayTo: [payTo], paymentId: () => pid, audit: audit?.log }) as typeof fetch;
 
 try {
   const before = { buyer: await usdcMicroBalance(buyer), payTo: await usdcMicroBalance(payTo) };

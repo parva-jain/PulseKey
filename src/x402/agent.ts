@@ -9,6 +9,11 @@ import { hcsSink, readTopic, replay, sha256, SpendLog, type Policy } from "../he
 const USDC = "0.0.429274";
 
 export function buildPayingFetch(opts: { accountId: string; key: PrivateKey; maxSpendMicro: bigint; session?: { spent: bigint }; allowPayTo?: string[]; fetchImpl?: typeof fetch; paymentId?: () => string | undefined; audit?: SpendLog }) {
+  // The audit page reconciles every USDC debit on this account against the topic, so a payer that skips the log
+  // would show up there as unlogged spending. Refuse to build one while the account has a public log.
+  if (!opts.audit && process.env.HCS_TOPIC_ID && opts.accountId === process.env.BUYER_ACCOUNT_ID) {
+    throw new Error("BUYER_ACCOUNT_ID has a public spending log (HCS_TOPIC_ID): pass audit from openSpendLog");
+  }
   // The session object is shared across purchases, so the budget covers the whole run, not one call.
   const session = opts.session ?? { spent: 0n };
   const signer = createClientHederaSigner(opts.accountId, opts.key, { network: "hedera:testnet" });
