@@ -6,6 +6,8 @@ import { createApi } from "../src/api/app.js";
 import { createContributorApi } from "../src/api/contributor.js";
 import { identityFromEnv } from "../src/identity/index.js";
 import { hederaPayouts } from "../src/pool/payouts.js";
+import { ultrahuman } from "../src/ultrahuman/connection.js";
+import { syncDue } from "../src/ultrahuman/sync.js";
 import { poolKek } from "../src/pool/crypto.js";
 import { seedPool } from "../src/pool/seed.js";
 import { today } from "../src/pool/store.js";
@@ -28,5 +30,9 @@ const app = createApi(db, kek, new HTTPFacilitatorClient({ url: facilitator, tim
 
 const identity = identityFromEnv(baseUrl);
 const study = Client.forTestnet().setOperator(payTo, PrivateKey.fromStringECDSA(process.env.STUDY_PRIVATE_KEY!));
-app.use("/api", createContributorApi(db, kek, { identity, chain: hederaPayouts(study, payTo), baseUrl, appUrl: process.env.APP_URL }));
+app.use("/api", createContributorApi(db, kek, { identity, chain: hederaPayouts(study, payTo), ring: ultrahuman, baseUrl, appUrl: process.env.APP_URL }));
+
+// Auto-collect: one light pass every hour, syncing anyone not synced in the last SYNC_EVERY_HOURS.
+const everyHours = Number(process.env.SYNC_EVERY_HOURS ?? 6);
+setInterval(() => syncDue(db, kek, ultrahuman, everyHours).then(r => Object.keys(r).length && console.log("[sync]", r)), 3_600_000).unref();
 app.listen(PORT, () => console.log(`buyer API and contributor API on ${PORT} via ${facilitator}; identity: ${identity.name}`));

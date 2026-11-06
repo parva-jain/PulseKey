@@ -1,1 +1,28 @@
-{"name":"health-data-pool","private":true,"type":"module","scripts":{"test:0g":"tsx --env-file=.env scripts/test-0g.ts"},"dependencies":{"@electric-sql/pglite":"^0.3.16","@hiero-ledger/sdk":"2.90.1","@x402/core":"2.30.0","@x402/express":"2.30.0","@x402/extensions":"2.30.0","@x402/fetch":"2.30.0","@x402/hedera":"2.30.0","express":"^5.3.0","openai":"4.104.0","openid-client":"6.8.9"},"devDependencies":{"@types/express":"^5.0.6","@types/node":"26.6.6","tsx":"4.23.15","typescript":"5.9.3"}}
+{
+  "name": "health-data-pool",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:0g": "tsx --env-file=.env scripts/test-0g.ts",
+    "test": "tsx --test scripts/test-pool.ts scripts/test-query.ts scripts/test-payouts.ts scripts/test-contributor-api.ts scripts/test-ring.ts",
+    "serve": "tsx --env-file=.env scripts/serve.ts"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.3.16",
+    "@hiero-ledger/sdk": "2.90.1",
+    "@x402/core": "2.30.0",
+    "@x402/express": "2.30.0",
+    "@x402/extensions": "2.30.0",
+    "@x402/fetch": "2.30.0",
+    "@x402/hedera": "2.30.0",
+    "express": "^5.3.0",
+    "openai": "4.104.0",
+    "openid-client": "6.8.9"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "26.6.6",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
