@@ -14,6 +14,8 @@ import { ATTEMPT_TTL_S } from "../world/oidc.js";
 import { newPkce } from "../ultrahuman/client.js";
 import { connectRing, connectSample, disconnect, getConnection, RING_ISSUER, ringClientId, type RingApi } from "../ultrahuman/connection.js";
 import { syncPerson } from "../ultrahuman/sync.js";
+import type { SealedModel } from "../ai/model.js";
+import { todaysBrief } from "../pool/brief.js";
 
 const SESSION_COOKIE = "pk_session";
 const ATTEMPT_COOKIE = "pk_attempt";
@@ -39,7 +41,7 @@ function cookies(req: Request) {
 /** Only same-app paths: "//evil.com" and "/\evil.com" are other origins to a browser. */
 const safeReturn = (v: unknown) => (typeof v === "string" && /^\/(?![/\\])[\w\-./?=&%#]*$/.test(v) ? v : "/");
 
-export function createContributorApi(db: Db, kek: Buffer, deps: { identity: IdentityProvider; chain: PayoutChain; ring: RingApi; baseUrl: string; appUrl?: string }) {
+export function createContributorApi(db: Db, kek: Buffer, deps: { identity: IdentityProvider; chain: PayoutChain; ring: RingApi; model: SealedModel; baseUrl: string; appUrl?: string }) {
   const { identity, chain, ring } = deps;
   const secure = deps.baseUrl.startsWith("https://");
   const appUrl = deps.appUrl ?? deps.baseUrl;
@@ -193,6 +195,11 @@ export function createContributorApi(db: Db, kek: Buffer, deps: { identity: Iden
   r.delete("/me/grant", requireSession, async (req: AuthedReq, res) => {
     await db.query("UPDATE grants SET status = 'revoked' WHERE contributor_id = $1 AND status = 'active'", [req.session!.contributorId]);
     res.json({ grant: null });
+  });
+
+  /** Today's private brief: generated once a day by the sealed model from the person's own nights. */
+  r.get("/me/brief", requireSession, async (req: AuthedReq, res) => {
+    res.json(await todaysBrief(db, kek, deps.model, req.session!.contributorId));
   });
 
   /** "Where your data went": every answered query this person was counted in, and what they earned from it. */

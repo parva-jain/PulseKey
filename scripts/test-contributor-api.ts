@@ -14,6 +14,7 @@ import { addDays, storeRows, today } from "../src/pool/store.js";
 import * as q from "../src/pool/query.js";
 import type { PayoutChain } from "../src/pool/payouts.js";
 import { browser as makeBrowser, fakeRing } from "./helpers.js";
+import { offModel } from "../src/ai/model.js";
 
 const kek = randomBytes(32);
 const db = await openDb();
@@ -26,7 +27,7 @@ const chain: PayoutChain = {
 const app = express();
 const server = app.listen(0);
 const base = `http://localhost:${(server.address() as AddressInfo).port}`;
-app.use("/api", createContributorApi(db, kek, { identity: devIdentity(base), chain, ring: fakeRing().api, baseUrl: base }));
+app.use("/api", createContributorApi(db, kek, { identity: devIdentity(base), chain, ring: fakeRing().api, model: offModel, baseUrl: base }));
 after(() => server.close());
 
 const browser = () => makeBrowser(base);

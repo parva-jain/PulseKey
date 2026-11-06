@@ -10,6 +10,8 @@ import type { Db } from "../db/index.js";
 import { METRICS } from "../pool/metrics.js";
 import { MIN_GROUP, QUERY_EPSILON } from "../pool/privacy.js";
 import { answeredByPaymentId, markUnpaid, parseSpec, PER_PERSON_MICRO, quote, quotedPrice, Refused, runQuery, settleQuery } from "../pool/query.js";
+import { PATTERN_EPSILON, parsePatternSpec, quotePattern, runPattern } from "../pool/pattern.js";
+import { offModel, type SealedModel } from "../ai/model.js";
 import { decodeHeader, hashscanUrl, mirrorConfirms, txIdOfPayload } from "../x402/server.js";
 
 const NETWORK = "hedera:testnet" as const;
@@ -34,8 +36,10 @@ function sendRefusal(res: Response, err: unknown) {
   throw err;
 }
 
-export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, opts: { baseUrl: string; payTo: string; confirm?: typeof mirrorConfirms }) {
+export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, opts: { baseUrl: string; payTo: string; confirm?: typeof mirrorConfirms; model?: SealedModel }) {
   const { baseUrl: base, payTo } = opts;
+  const model = opts.model ?? offModel;
+  const isPattern = (body: unknown) => (body as { route?: unknown } | undefined)?.route === "pattern";
 
   const resourceServer = new x402ResourceServer(facilitator)
     .register(NETWORK, new ExactHederaScheme())
@@ -76,6 +80,19 @@ export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, o
           returns: "quoteId, eligibleAbout, priceUsd, expiresAt (10 minutes)",
         },
         {
+          method: "POST", url: `${base}/quote`, price: { type: "fixed", usd: "0.02" }, route: "pattern",
+          about: "A pattern inside each person's own series, answered yes / no / unclear per person by a sealed model on 0G, released as noisy shares.",
+          available: model.name !== "off",
+          input: {
+            route: "pattern",
+            template: { id: "lead_lag_v1", leading: "metric", leadDirection: ["falls", "rises"], outcome: "metric, not the leading one", outcomeDirection: ["falls", "rises"], lagNights: [1, 2, 3] },
+            from: "YYYY-MM-DD", to: "YYYY-MM-DD, 14 to 120 days after from",
+          },
+          example: { route: "pattern", template: { id: "lead_lag_v1", leading: "hrv_ms", leadDirection: "falls", outcome: "sleep_minutes", outcomeDirection: "falls", lagNights: 1 } },
+          returns: "quote as above, plus route: saved_labels (no new reads) or sealed_read",
+          epsilonPerQuery: PATTERN_EPSILON,
+        },
+        {
           method: "POST", url: `${base}/queries`, price: { type: "dynamic", from: "quote.priceUsd", perPersonUsd: Number(PER_PERSON_MICRO) / 1e6 },
           input: { quoteId: "string" }, returns: "noisy answer with a 95% noise range",
         },
@@ -89,7 +106,9 @@ export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, o
   // Pre-payment checks: a malformed request gets a 4xx and never a 402.
   app.post("/quote", (req: Request, res: Response, next: NextFunction) => {
     try {
-      parseSpec(req.body);
+      if (!isPattern(req.body)) parseSpec(req.body);
+      else if (model.name === "off") throw new Refused("sealed_ai_unavailable", 503);
+      else parsePatternSpec(req.body);
       next();
     } catch (e) {
       sendRefusal(res, e);
@@ -139,7 +158,7 @@ export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, o
 
   app.post("/quote", async (req, res) => {
     try {
-      res.json(await quote(db, parseSpec(req.body)));
+      res.json(isPattern(req.body) ? await quotePattern(db, model, parsePatternSpec(req.body)) : await quote(db, parseSpec(req.body)));
     } catch (e) {
       sendRefusal(res, e);
     }
@@ -150,7 +169,10 @@ export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, o
     const known = pid ? await answeredByPaymentId(db, pid) : null;
     if (known) return void res.json({ ...(known as object), replay: true });
     try {
-      const result = await runQuery(db, kek, req.body.quoteId, pid);
+      const { rows } = await db.query<{ route: string }>("SELECT spec->>'route' AS route FROM quotes WHERE id = $1", [req.body.quoteId]);
+      const result = rows[0]?.route === "pattern"
+        ? await runPattern(db, kek, model, req.body.quoteId, pid)
+        : await runQuery(db, kek, req.body.quoteId, pid);
       req.queryId = result.queryId;
       res.json(result);
     } catch (e) {

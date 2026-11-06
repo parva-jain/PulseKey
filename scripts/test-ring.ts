@@ -15,6 +15,7 @@ const { seedPool } = await import("../src/pool/seed.js");
 const { addDays, iso, personKey, today } = await import("../src/pool/store.js");
 const q = await import("../src/pool/query.js");
 const { syncDue } = await import("../src/ultrahuman/sync.js");
+const { offModel } = await import("../src/ai/model.js");
 const { browser: makeBrowser, fakeRing } = await import("./helpers.js");
 
 const kek = randomBytes(32);
@@ -24,7 +25,7 @@ const app = express();
 const server = app.listen(0);
 const base = `http://localhost:${(server.address() as AddressInfo).port}`;
 const chain = { createAccount: async () => ({ accountId: "0.0.1", tx: "t" }), sendUsdc: async () => ({ tx: "t" }) };
-app.use("/api", createContributorApi(db, kek, { identity: devIdentity(base), chain, ring: ring.api, baseUrl: base }));
+app.use("/api", createContributorApi(db, kek, { identity: devIdentity(base), chain, ring: ring.api, model: offModel, baseUrl: base }));
 after(() => server.close());
 
 const idOf = async (b: ReturnType<typeof makeBrowser>) => {
@@ -131,7 +132,7 @@ test("sample data goes through the same path and counts as synthetic in answers"
   const app2 = express();
   const s2 = app2.listen(0);
   const base2 = `http://localhost:${(s2.address() as AddressInfo).port}`;
-  app2.use("/api", createContributorApi(pool, kek, { identity: devIdentity(base2), chain, ring: fakeRing().api, baseUrl: base2 }));
+  app2.use("/api", createContributorApi(pool, kek, { identity: devIdentity(base2), chain, ring: fakeRing().api, model: offModel, baseUrl: base2 }));
   try {
     await seedPool(pool, kek, { people: 3, days: 60, on: today() });
     const sample = makeBrowser(base2);
