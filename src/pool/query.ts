@@ -144,7 +144,10 @@ export async function runQuery(db: Db, kek: Buffer, quoteId: string, paymentId: 
 
   const means = await personMeans(db, kek, spec, [...people.keys()]);
   if (means.length < MIN_GROUP) throw new Refused("group_too_small", 409);
-  const seed = (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM contributors WHERE id = ANY ($1) AND kind = 'seed'", [[...people.keys()]])).rows[0].n;
+  // Synthetic means seed people plus anyone whose source is labelled sample data, so the label never undercounts.
+  const seed = (await db.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM contributors c LEFT JOIN connections k ON k.contributor_id = c.id
+      WHERE c.id = ANY ($1) AND (c.kind = 'seed' OR k.source = 'sample')`, [[...people.keys()]])).rows[0].n;
 
   const id = randomUUID();
   const result = {
