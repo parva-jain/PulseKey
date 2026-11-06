@@ -165,4 +165,7 @@ if (process.argv[1]?.endsWith("agent.ts")) {
   const out = await runAgent(process.env.API_BASE ?? "http://localhost:4021", payFetch, asks, console.log, audit?.log);
   console.log(`\nspent this session: $${Number(session.spent) / 1e6}`);
   for (const o of out) if ("receipt" in o && o.receipt?.transaction) console.log("HashScan:", `https://hashscan.io/testnet/transaction/${String(o.receipt.transaction).replace("@", "-").replace(/\.(\d+)$/, "-$1")}`);
+  // The Hedera client behind the spending log keeps sockets and timers open, so the process would never end on its own.
+  audit?.client.close();
+  process.exit(0);
 }
