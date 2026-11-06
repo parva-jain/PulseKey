@@ -9,7 +9,8 @@
     "eval": "tsx --env-file=.env scripts/eval-classifier.ts",
     "reseed": "tsx --env-file=.env scripts/reseed.ts",
     "web:dev": "vite --config web/vite.config.ts",
-    "web:build": "vite build --config web/vite.config.ts"
+    "web:build": "vite build --config web/vite.config.ts",
+    "start": "tsx scripts/serve.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.16",
