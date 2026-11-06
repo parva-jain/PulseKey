@@ -2,7 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+html { scroll-behavior: smooth; }
 body { background: #FAF8F4; color: #1C1B22; }
+.blur-table-row { filter: blur(3.5px); user-select: none; }
 .card { @apply bg-white rounded-2xl border border-line shadow-card; }
 .eyebrow { @apply text-xs font-semibold uppercase tracking-wider text-muted; }
 .btn-primary { @apply inline-flex items-center justify-center gap-2 bg-indigo hover:bg-indigo-hover text-white font-medium rounded-xl px-5 py-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }

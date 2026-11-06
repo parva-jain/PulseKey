@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, describeAnswer, describeQuestion, usd } from "../api";
-import { DotCluster, Logo, Money, ProofChip, Spinner } from "../components/ui";
+import { Logo, Money, ProofChip, Spinner } from "../components/ui";
 
 type Feed = {
   network: string; payTo: string;
@@ -138,24 +138,3 @@ export function Audit() {
 const Stat = ({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) => (
   <div className="card p-5"><div className="text-xs text-muted">{label}</div><div className="font-serif text-3xl mt-1">{value}</div>{sub && <div className="text-xs text-muted mt-1">{sub}</div>}</div>
 );
-
-/** A plain landing page until the full Stitch landing page is ported. */
-export function Landing() {
-  return (
-    <div className="min-h-screen">
-      <Nav />
-      <main className="max-w-[1280px] mx-auto px-8 pt-16 pb-24 grid grid-cols-2 gap-12 items-center">
-        <div>
-          <h1 className="font-serif text-6xl leading-[1.05] tracking-tight">Your ring tracks your sleep. Now your sleep pays you.</h1>
-          <p className="text-lg text-muted mt-6 max-w-xl">AI agents pay for group answers about sleep and recovery. They never see your nights. Everyone counted gets paid.</p>
-          <div className="flex items-center gap-4 mt-10">
-            <Link to="/signup/verify" className="btn-primary">Connect my ring</Link>
-            <Link to="/signup/verify" className="btn-secondary">Try with sample data</Link>
-          </div>
-          <p className="text-xs text-muted mt-6">Testnet demo. Synthetic contributors are labelled. <Link to="/audit" className="link">See every paid answer →</Link></p>
-        </div>
-        <div className="flex justify-center"><DotCluster className="w-[360px] h-[360px]" /></div>
-      </main>
-    </div>
-  );
-}

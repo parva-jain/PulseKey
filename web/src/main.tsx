@@ -4,7 +4,8 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "./index.css";
 import { Connect, GrantFailed, Share, Verify } from "./pages/Signup";
 import { Activity, EarningsPage, GrantPage, Today } from "./pages/App";
-import { Audit, Landing } from "./pages/Public";
+import { Audit } from "./pages/Public";
+import { Landing } from "./pages/Landing";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
