@@ -1,4 +1,7 @@
 // Runs the buyer API on a persistent local pool, seeding labelled synthetic people on first start.
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import express from "express";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { Client, PrivateKey } from "@hiero-ledger/sdk";
 import { openDb } from "../src/db/index.js";
@@ -33,6 +36,13 @@ const app = createApi(db, kek, new HTTPFacilitatorClient({ url: facilitator, tim
 const identity = identityFromEnv(baseUrl);
 const study = Client.forTestnet().setOperator(payTo, PrivateKey.fromStringECDSA(process.env.STUDY_PRIVATE_KEY!));
 app.use("/api", createContributorApi(db, kek, { identity, chain: hederaPayouts(study, payTo), ring: ultrahuman, model, baseUrl, appUrl: process.env.APP_URL }));
+
+// The web app (npm run web:build), same origin as the API so the session cookie just works.
+const web = resolve(import.meta.dirname, "../web/dist");
+if (existsSync(web)) {
+  app.use(express.static(web, { index: false }));
+  app.get(/^\/(?!api\/|proof\/|catalog|quote|queries|\.well-known).*/, (_req, res) => res.sendFile(resolve(web, "index.html")));
+} else console.log("web app not built: run npm run web:build");
 
 // Auto-collect: one light pass every hour, syncing anyone not synced in the last SYNC_EVERY_HOURS.
 const everyHours = Number(process.env.SYNC_EVERY_HOURS ?? 6);
