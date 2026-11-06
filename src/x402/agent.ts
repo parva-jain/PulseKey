@@ -103,7 +103,10 @@ export async function runAgent(baseUrl: string, payFetch: (paymentId: string) =>
     if (!aRes.ok) throw new Error(`query failed ${aRes.status}: ${await aRes.text()}`);
     const answer = await aRes.json();
     const receipt = readReceipt(aRes);
-    log(`  answer: ${answer.value} ${answer.unit} (±${answer.plusMinus95}, 95% noise range), ${answer.peopleAbout}+ people`);
+    const shown = answer.answer
+      ? `yes ${answer.answer.label.yes}, no ${answer.answer.label.no}, unclear ${answer.answer.label.unclear} (±${answer.answer.plusMinus95} points; ${answer.sealedReads} sealed reads, ${answer.labelsReused}+ saved labels)`
+      : `${answer.value} ${answer.unit} (±${answer.plusMinus95}, 95% noise range)`;
+    log(`  answer: ${shown}, ${answer.peopleAbout}+ people`);
     log(`  paid $${q.priceUsd}: ${receipt?.transaction}`);
     out.push({ ask, quote: q, answer, receipt, paymentId: pid });
   }
@@ -136,6 +139,8 @@ if (process.argv[1]?.endsWith("agent.ts")) {
   const asks: Ask[] = [
     { why: "What is typical nightly sleep across ring wearers over the last 30 days?", spec: { metric: "sleep_minutes", stat: "mean", from: day(30), to: day(1) }, maxPriceMicro: 3_000_000n },
     { why: "What share of people average HRV under 40 ms?", spec: { metric: "hrv_ms", stat: "share_below", threshold: 40, from: day(30), to: day(1) }, maxPriceMicro: 3_000_000n },
+    // A pattern inside each person's own nights, read by a sealed model on 0G: does a short night pull next-day HRV down?
+    { why: "Does HRV drop the night after people sleep less?", spec: { route: "pattern", template: { id: "lead_lag_v1", leading: "sleep_minutes", leadDirection: "falls", outcome: "hrv_ms", outcomeDirection: "falls", lagNights: 1 }, from: day(60), to: day(1) }, maxPriceMicro: 3_000_000n },
   ];
   const key = PrivateKey.fromStringECDSA(process.env.BUYER_PRIVATE_KEY!);
   const account = process.env.BUYER_ACCOUNT_ID!;
