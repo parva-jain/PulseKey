@@ -67,7 +67,7 @@ export function priceMicro(people: number) {
 }
 
 /** Counted people are shown to buyers rounded down to 10, because the exact figure says who shares what. */
-const roundDown10 = (n: number) => Math.floor(n / 10) * 10;
+export const roundDown10 = (n: number) => Math.floor(n / 10) * 10;
 
 export async function quote(db: Db, spec: StatSpec, on = today()) {
   const people = await eligible(db, spec, on);
@@ -144,10 +144,6 @@ export async function runQuery(db: Db, kek: Buffer, quoteId: string, paymentId: 
 
   const means = await personMeans(db, kek, spec, [...people.keys()]);
   if (means.length < MIN_GROUP) throw new Refused("group_too_small", 409);
-  // Synthetic means seed people plus anyone whose source is labelled sample data, so the label never undercounts.
-  const seed = (await db.query<{ n: number }>(
-    `SELECT count(*)::int AS n FROM contributors c LEFT JOIN connections k ON k.contributor_id = c.id
-      WHERE c.id = ANY ($1) AND (c.kind = 'seed' OR k.source = 'sample')`, [[...people.keys()]])).rows[0].n;
 
   const id = randomUUID();
   const result = {
@@ -156,7 +152,7 @@ export async function runQuery(db: Db, kek: Buffer, quoteId: string, paymentId: 
     ...release(spec, means, QUERY_EPSILON),
     peopleAbout: roundDown10(people.size),
     epsilon: QUERY_EPSILON,
-    syntheticShare: Math.round((seed / people.size) * 10) / 10,
+    syntheticShare: await syntheticShare(db, [...people.keys()]),
     method: "Each person's range mean, clipped, then Laplace noise on the group total. Nobody's own value is released.",
   };
   await db.transaction(async tx => {
@@ -169,6 +165,14 @@ export async function runQuery(db: Db, kek: Buffer, quoteId: string, paymentId: 
     }
   });
   return result;
+}
+
+/** Synthetic means seed people plus anyone whose source is labelled sample data, so the label never undercounts. */
+export async function syntheticShare(db: Db, ids: string[]) {
+  const { rows } = await db.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM contributors c LEFT JOIN connections k ON k.contributor_id = c.id
+      WHERE c.id = ANY ($1) AND (c.kind = 'seed' OR k.source = 'sample')`, [ids]);
+  return Math.round((rows[0].n / ids.length) * 10) / 10;
 }
 
 /** After the buyer's payment settles: everyone counted earns by days of data, whatever the answer. Idempotent. */
