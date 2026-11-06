@@ -28,7 +28,7 @@ const facilitator = process.env.FACILITATOR_URL ?? "https://x402.org/facilitator
 const baseUrl = process.env.API_BASE ?? `http://localhost:${PORT}`;
 const payTo = process.env.STUDY_ACCOUNT_ID!;
 const model = modelFromEnv();
-const app = createApi(db, kek, new HTTPFacilitatorClient({ url: facilitator, timeoutMs: 60_000 }), { baseUrl, payTo, model });
+const app = createApi(db, kek, new HTTPFacilitatorClient({ url: facilitator, timeoutMs: 60_000 }), { baseUrl, payTo, model, audit: { topicId: process.env.HCS_TOPIC_ID, account: process.env.BUYER_ACCOUNT_ID } });
 
 const identity = identityFromEnv(baseUrl);
 const study = Client.forTestnet().setOperator(payTo, PrivateKey.fromStringECDSA(process.env.STUDY_PRIVATE_KEY!));

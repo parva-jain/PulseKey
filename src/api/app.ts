@@ -12,6 +12,8 @@ import { MIN_GROUP, QUERY_EPSILON } from "../pool/privacy.js";
 import { answeredByPaymentId, markUnpaid, parseSpec, PER_PERSON_MICRO, quote, quotedPrice, Refused, runQuery, settleQuery } from "../pool/query.js";
 import { PATTERN_EPSILON, parsePatternSpec, quotePattern, runPattern } from "../pool/pattern.js";
 import { offModel, type SealedModel } from "../ai/model.js";
+import { agentAudit, queryProof } from "../proof/index.js";
+import { agentAuditHtml, queryProofHtml } from "../proof/html.js";
 import { decodeHeader, hashscanUrl, mirrorConfirms, txIdOfPayload } from "../x402/server.js";
 
 const NETWORK = "hedera:testnet" as const;
@@ -36,7 +38,7 @@ function sendRefusal(res: Response, err: unknown) {
   throw err;
 }
 
-export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, opts: { baseUrl: string; payTo: string; confirm?: typeof mirrorConfirms; model?: SealedModel }) {
+export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, opts: { baseUrl: string; payTo: string; confirm?: typeof mirrorConfirms; model?: SealedModel; audit?: { topicId?: string; account?: string }; proofDeps?: Parameters<typeof agentAudit>[2] & { fetchImpl?: typeof fetch } }) {
   const { baseUrl: base, payTo } = opts;
   const model = opts.model ?? offModel;
   const isPattern = (body: unknown) => (body as { route?: unknown } | undefined)?.route === "pattern";
@@ -186,6 +188,29 @@ export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, o
     if (!rows[0]) return void res.status(404).json({ error: "not_found" });
     const r = rows[0];
     res.json({ status: r.status, priceMicro: r.price_micro, paymentTx: r.payment_tx, hashscan: r.payment_tx ? hashscanUrl(r.payment_tx) : null });
+  });
+
+  // ---- Public proof pages: HTML for a browser, JSON for anything else ----
+
+  const wantsHtml = (req: Request) => req.accepts(["json", "html"]) === "html";
+
+  app.get("/proof/queries/:id", async (req, res) => {
+    if (!/^[0-9a-f-]{36}$/.test(req.params.id)) return void res.status(400).json({ error: "bad_id" });
+    const p = await queryProof(db, req.params.id, { payTo, asset: USDC, fetchImpl: opts.proofDeps?.fetchImpl });
+    if (!p) return void res.status(404).json({ error: "not_found" });
+    wantsHtml(req) ? res.type("html").send(queryProofHtml(p)) : res.json(p);
+  });
+
+  app.get("/proof/agent", async (req, res) => {
+    const topicId = String(req.query.topic ?? opts.audit?.topicId ?? "");
+    const account = String(req.query.account ?? opts.audit?.account ?? "");
+    if (!/^0\.0\.\d+$/.test(topicId) || !/^0\.0\.\d+$/.test(account)) return void res.status(400).json({ error: "topic_and_account_required" });
+    try {
+      const a = await agentAudit(topicId, account, opts.proofDeps);
+      wantsHtml(req) ? res.type("html").send(agentAuditHtml(a)) : res.json(a);
+    } catch {
+      res.status(502).json({ error: "mirror_unavailable" });
+    }
   });
 
   return app;
