@@ -25,23 +25,33 @@ const day = (n: number) => addDays(today(), -n);
 const db = await openDb();
 const kek = randomBytes(32);
 const model = zgModel();
-console.log("seeding 30 synthetic people...");
-await seedPool(db, kek, { people: 30, days: 70, on: today() });
+const PEOPLE = Number(process.env.LIVE_PEOPLE ?? 60);
+console.log(`seeding ${PEOPLE} synthetic people with planted patterns...`);
+await seedPool(db, kek, { people: PEOPLE, days: 70, on: today() });
+const { eligiblePattern, parsePatternSpec } = await import("../src/pool/pattern.js");
+const { TRUTH } = await import("../src/eval/planted.js");
+/** The share of eligible people whose planted truth is yes: what a perfect, noiseless classifier would release. */
+async function truthShare(spec: unknown, q: keyof typeof TRUTH) {
+  const ids = [...(await eligiblePattern(db, parsePatternSpec(spec))).keys()];
+  const { rows } = await db.query<{ cohort: string }>("SELECT cohort FROM seed_truth WHERE contributor_id = ANY ($1)", [ids]);
+  return Math.round((100 * rows.filter(r => TRUTH[q][r.cohort as keyof (typeof TRUTH)[typeof q]] === "yes").length) / ids.length);
+}
 const server = createApi(db, kek, new HTTPFacilitatorClient({ url: FAC, timeoutMs: 60_000 }), { baseUrl: BASE, payTo, model }).listen(PORT);
 
 const key = PrivateKey.fromStringECDSA(process.env.BUYER_PRIVATE_KEY!);
 const session = { spent: 0n };
 const payFetch = (pid: string) => buildPayingFetch({ accountId: buyer, key, maxSpendMicro: 2_000_000n, session, allowPayTo: [payTo], paymentId: () => pid }) as typeof fetch;
 const ask = { why: "Does HRV fall the night before short sleep?", spec: { route: "pattern", template: { id: "lead_lag_v1", leading: "hrv_ms", leadDirection: "falls", outcome: "sleep_minutes", outcomeDirection: "falls", lagNights: 1 }, from: day(60), to: day(1) }, maxPriceMicro: 1_000_000n };
-// The direction the seed data really has: a short night lowers next-day HRV. Mostly "yes" expected here.
+// The coach's question. The demo pool plants it in about 40% of people, and the reverse in about 20%.
 const reverse = { why: "Does HRV drop the night after short sleep?", spec: { ...ask.spec, template: { ...ask.spec.template, leading: "sleep_minutes", outcome: "hrv_ms" } }, maxPriceMicro: 1_000_000n };
 
 try {
   for (const [round, q] of [["route3_sealed_read", ask], ["route2_saved_labels", ask], ["route3_reverse_direction", reverse]] as const) {
+    const truthYesPct = await truthShare(q.spec, q === ask ? "hrv_then_sleep" : "sleep_then_hrv");
     const t0 = Date.now();
     const [r] = await runAgent(BASE, payFetch, [q]) as any[];
     log(round, {
-      ms: Date.now() - t0, quoteRoute: r.quote?.route, price: r.quote?.priceUsd, skipped: r.skipped,
+      ms: Date.now() - t0, truthYesPct, quoteRoute: r.quote?.route, price: r.quote?.priceUsd, skipped: r.skipped,
       answer: r.answer && { ...r.answer.answer, peopleAbout: r.answer.peopleAbout, sealedReads: r.answer.sealedReads, labelsReused: r.answer.labelsReused, syntheticShare: r.answer.syntheticShare },
       proof: r.answer && { model: r.answer.proof.model, providers: r.answer.proof.providers, requestIds: r.answer.proof.requestIds.length, firstIds: r.answer.proof.requestIds.slice(0, 3) },
       hashscan: r.receipt?.transaction && hashscanUrl(r.receipt.transaction),
