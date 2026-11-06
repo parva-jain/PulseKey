@@ -13,6 +13,7 @@ import { seedPool, syntheticPerson } from "../src/pool/seed.js";
 import { addDays, storeRows, today } from "../src/pool/store.js";
 import * as q from "../src/pool/query.js";
 import type { PayoutChain } from "../src/pool/payouts.js";
+import { browser as makeBrowser, fakeRing } from "./helpers.js";
 
 const kek = randomBytes(32);
 const db = await openDb();
@@ -25,33 +26,10 @@ const chain: PayoutChain = {
 const app = express();
 const server = app.listen(0);
 const base = `http://localhost:${(server.address() as AddressInfo).port}`;
-app.use("/api", createContributorApi(db, kek, { identity: devIdentity(base), chain, baseUrl: base }));
+app.use("/api", createContributorApi(db, kek, { identity: devIdentity(base), chain, ring: fakeRing().api, baseUrl: base }));
 after(() => server.close());
 
-/** A tiny browser: keeps cookies, does not follow redirects so each hop can be checked. */
-function browser() {
-  const jar = new Map<string, string>();
-  const go = async (path: string, init: RequestInit & { json?: unknown } = {}) => {
-    const headers: Record<string, string> = { cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") };
-    if (init.json !== undefined) headers["content-type"] = "application/json";
-    const res = await fetch(path.startsWith("http") ? path : base + path, { ...init, headers, redirect: "manual", body: init.json !== undefined ? JSON.stringify(init.json) : init.body });
-    for (const c of res.headers.getSetCookie()) {
-      const [kv] = c.split(";");
-      const [k, v] = kv.split("=");
-      if (/Max-Age=0|Expires=Thu, 01 Jan 1970/.test(c)) jar.delete(k); else jar.set(k, v);
-    }
-    return res;
-  };
-  /** Runs the whole dev sign-in: start, the dev page, and the callback. Returns the final redirect. */
-  const signIn = async (name: string, opts: { recheck?: boolean; returnTo?: string } = {}) => {
-    const start = await go(`/api/auth/start?${opts.recheck ? "recheck=1&" : ""}return=${encodeURIComponent(opts.returnTo ?? "/home")}`);
-    assert.equal(start.status, 302);
-    const state = new URL(start.headers.get("location")!).searchParams.get("state")!;
-    const cb = await go(`/api/auth/callback?state=${state}&iss=dev:local${opts.recheck ? "" : `&dev_name=${name}`}`);
-    return cb;
-  };
-  return { go, signIn, jar };
-}
+const browser = () => makeBrowser(base);
 
 const ALL = ["sleep", "hrv", "resting_hr", "recovery"];
 

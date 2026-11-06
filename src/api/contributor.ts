@@ -11,9 +11,14 @@ import { Refused } from "../pool/query.js";
 import { activeGrant, createContributor, iso, setGrant, today, withdraw } from "../pool/store.js";
 import { hashscanUrl } from "../x402/server.js";
 import { ATTEMPT_TTL_S } from "../world/oidc.js";
+import { newPkce } from "../ultrahuman/client.js";
+import { connectRing, connectSample, disconnect, getConnection, ringClientId, type RingApi } from "../ultrahuman/connection.js";
+import { syncPerson } from "../ultrahuman/sync.js";
 
 const SESSION_COOKIE = "pk_session";
 const ATTEMPT_COOKIE = "pk_attempt";
+const RING_COOKIE = "pk_ring";
+const SYNC_COOLDOWN_MS = 60_000;
 const SESSION_DAYS = 7;
 export const FRESH_WINDOW_S = Number(process.env.FRESH_WINDOW_S ?? 600); // a check counts as fresh for 10 minutes
 
@@ -34,8 +39,8 @@ function cookies(req: Request) {
 /** Only same-app paths: "//evil.com" and "/\evil.com" are other origins to a browser. */
 const safeReturn = (v: unknown) => (typeof v === "string" && /^\/(?![/\\])[\w\-./?=&%#]*$/.test(v) ? v : "/");
 
-export function createContributorApi(db: Db, kek: Buffer, deps: { identity: IdentityProvider; chain: PayoutChain; baseUrl: string; appUrl?: string }) {
-  const { identity, chain } = deps;
+export function createContributorApi(db: Db, kek: Buffer, deps: { identity: IdentityProvider; chain: PayoutChain; ring: RingApi; baseUrl: string; appUrl?: string }) {
+  const { identity, chain, ring } = deps;
   const secure = deps.baseUrl.startsWith("https://");
   const appUrl = deps.appUrl ?? deps.baseUrl;
   const redirectUri = `${deps.baseUrl}/api/auth/callback`;
@@ -177,7 +182,12 @@ export function createContributorApi(db: Db, kek: Buffer, deps: { identity: Iden
       || (input.autoCollect && !cur.auto_collect);
     if (widens && !isFresh(req.session!)) return requireFresh(req, res, next);
     await setGrant(db, id, input, on);
-    res.json({ grant: grantView((await activeGrant(db, id))!), neededFreshCheck: widens });
+    // A connected source is pulled straight away, so newly shared days are in the pool without another click.
+    const conn = await getConnection(db, id);
+    const synced = conn?.status === "active"
+      ? await syncPerson(db, kek, ring, id, on).catch(e => ({ error: e instanceof Refused ? e.code : "sync_failed" }))
+      : null;
+    res.json({ grant: grantView((await activeGrant(db, id))!), neededFreshCheck: widens, synced });
   });
 
   r.delete("/me/grant", requireSession, async (req: AuthedReq, res) => {
@@ -229,8 +239,81 @@ export function createContributorApi(db: Db, kek: Buffer, deps: { identity: Iden
   r.post("/me/withdraw", requireSession, async (req: AuthedReq, res) => {
     if (req.body?.confirm !== true) throw new Refused("confirm_required", 400);
     const id = req.session!.contributorId;
+    await disconnect(db, kek, ring, id); // revokes at Ultrahuman while the key that opens the tokens still exists
     await withdraw(db, id);
     res.json({ withdrawn: true, unclaimedMicro: (await balanceMicro(db, id)).toString() });
+  });
+
+  // ---- Data source: the person's Ultrahuman ring, or labelled sample data ----
+
+  const ringRedirect = `${deps.baseUrl}/api/ring/callback`;
+
+  r.get("/ring", requireSession, async (req: AuthedReq, res) => {
+    const id = req.session!.contributorId;
+    const conn = await getConnection(db, id);
+    const days = await db.query<{ grp: string; n: number; first: Date; last: Date }>(
+      "SELECT grp, count(*)::int AS n, min(day) AS first, max(day) AS last FROM records WHERE contributor_id = $1 GROUP BY grp", [id]);
+    res.json({
+      connection: conn && { source: conn.source, status: conn.status, lastSyncAt: conn.lastSyncAt?.toISOString() ?? null, lastSync: conn.lastSync },
+      stored: Object.fromEntries(days.rows.map(d => [d.grp, { days: d.n, first: iso(d.first), last: iso(d.last) }])),
+    });
+  });
+
+  r.get("/ring/connect", requireSession, async (req: AuthedReq, res) => {
+    const clientId = await ringClientId(db, ring, ringRedirect);
+    const { verifier, challenge, state } = newPkce();
+    await db.query("INSERT INTO ring_attempts (state, contributor_id, client_id, verifier, return_to) VALUES ($1, $2, $3, $4, $5)",
+      [state, req.session!.contributorId, clientId, verifier, safeReturn(req.query.return)]);
+    res.cookie(RING_COOKIE, state, cookieOpts(ATTEMPT_TTL_S));
+    res.redirect(302, ring.authorizeUrl({ clientId, redirectUri: ringRedirect, state, challenge }));
+  });
+
+  r.get("/ring/callback", requireSession, async (req: AuthedReq, res) => {
+    const id = req.session!.contributorId;
+    const state = String(req.query.state ?? "");
+    if (!state || cookies(req)[RING_COOKIE] !== state) return void res.status(400).json({ error: "attempt_not_from_this_browser" });
+    res.clearCookie(RING_COOKIE, { path: "/" });
+    const { rows } = await db.query<{ client_id: string; verifier: string; return_to: string }>(
+      `UPDATE ring_attempts SET status = 'used' WHERE state = $1 AND contributor_id = $2 AND status = 'pending'
+         AND created_at > now() - make_interval(secs => $3) RETURNING client_id, verifier, return_to`, [state, id, ATTEMPT_TTL_S]);
+    const row = rows[0];
+    if (!row) return void res.status(400).json({ error: "unknown_used_or_expired_attempt" });
+    const back = (status: string) => {
+      const u = new URL(row.return_to, appUrl);
+      u.searchParams.set("ring", status);
+      res.redirect(302, u.toString());
+    };
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    if (req.query.error || !code) return back("denied");
+    let tokens;
+    try {
+      tokens = await ring.exchange({ clientId: row.client_id, redirectUri: ringRedirect, code, verifier: row.verifier });
+    } catch {
+      return back("error");
+    }
+    await connectRing(db, kek, ring, id, row.client_id, tokens);
+    // First sync right away when sharing is already chosen; otherwise choosing it triggers the sync.
+    if (await activeGrant(db, id)) await syncPerson(db, kek, ring, id).catch(e => console.error("[ring] first sync", e instanceof Refused ? e.code : e));
+    back("connected");
+  });
+
+  r.post("/ring/sample", requireSession, async (req: AuthedReq, res) => {
+    const id = req.session!.contributorId;
+    if (!(await db.query("SELECT 1 FROM contributor_keys WHERE contributor_id = $1", [id])).rows.length) throw new Refused("withdrawn", 409);
+    await connectSample(db, kek, ring, id);
+    res.json({ source: "sample", synced: (await activeGrant(db, id)) ? await syncPerson(db, kek, ring, id) : null });
+  });
+
+  r.post("/ring/sync", requireSession, async (req: AuthedReq, res) => {
+    const id = req.session!.contributorId;
+    const conn = await getConnection(db, id);
+    if (conn?.lastSyncAt && Date.now() - conn.lastSyncAt.getTime() < SYNC_COOLDOWN_MS) throw new Refused("too_soon", 429);
+    res.json({ synced: await syncPerson(db, kek, ring, id) });
+  });
+
+  r.delete("/ring", requireSession, async (req: AuthedReq, res) => {
+    await disconnect(db, kek, ring, req.session!.contributorId);
+    res.json({ connection: null });
   });
 
   r.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
