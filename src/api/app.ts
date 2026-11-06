@@ -8,7 +8,7 @@ import { declarePaymentIdentifierExtension, extractPaymentIdentifier, PAYMENT_ID
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import type { Db } from "../db/index.js";
 import { METRICS } from "../pool/metrics.js";
-import { MIN_GROUP, QUERY_EPSILON } from "../pool/privacy.js";
+import { MIN_GROUP, PERSON_EPSILON_CAP, QUERY_EPSILON } from "../pool/privacy.js";
 import { answeredByPaymentId, markUnpaid, parseSpec, PER_PERSON_MICRO, quote, quotedPrice, Refused, runQuery, settleQuery } from "../pool/query.js";
 import { PATTERN_EPSILON, parsePatternSpec, quotePattern, runPattern } from "../pool/pattern.js";
 import { offModel, type SealedModel } from "../ai/model.js";
@@ -199,6 +199,39 @@ export function createApi(db: Db, kek: Buffer, facilitator: FacilitatorClient, o
     const p = await queryProof(db, req.params.id, { payTo, asset: USDC, fetchImpl: opts.proofDeps?.fetchImpl });
     if (!p) return void res.status(404).json({ error: "not_found" });
     wantsHtml(req) ? res.type("html").send(queryProofHtml(p)) : res.json(p);
+  });
+
+  /** The Live audit feed: answered queries with their payments, totals, and the pool's shape. No person appears. */
+  app.get("/proof/feed", async (_req, res) => {
+    const recent = await db.query<{ id: string; created_at: Date; route: string; spec: any; result: any; epsilon: number; price_micro: string; payment_tx: string | null; reads: number }>(
+      `SELECT q.id, q.created_at, q.route, q.spec, q.result, q.epsilon, q.price_micro::text, q.payment_tx,
+              (SELECT count(*)::int FROM inference_calls c WHERE c.query_id = q.id) AS reads
+         FROM queries q WHERE q.status = 'answered' ORDER BY q.created_at DESC LIMIT 50`);
+    const totals = (await db.query<{ answers: number; paid: string; to_people: string }>(
+      `SELECT (SELECT count(*)::int FROM queries WHERE status = 'answered') AS answers,
+              (SELECT coalesce(sum(price_micro), 0)::text FROM queries WHERE status = 'answered') AS paid,
+              (SELECT coalesce(sum(micro), 0)::text FROM ledger WHERE kind = 'earning') AS to_people`)).rows[0];
+    const pool = (await db.query<{ people: number; synthetic: number }>(
+      `SELECT count(*)::int AS people, count(*) FILTER (WHERE c.kind = 'seed' OR k.source = 'sample')::int AS synthetic
+         FROM contributors c JOIN contributor_keys ck ON ck.contributor_id = c.id LEFT JOIN connections k ON k.contributor_id = c.id`)).rows[0];
+    // Budget used per person, binned to whole units: an aggregate of the pool, never a row per person.
+    const budget = await db.query<{ bin: number; n: number }>(
+      `SELECT least(floor(coalesce(s.eps, 0)), $1)::int AS bin, count(*)::int AS n
+         FROM contributor_keys ck LEFT JOIN (SELECT contributor_id, sum(epsilon) AS eps FROM budget_spend GROUP BY contributor_id) s ON s.contributor_id = ck.contributor_id
+        GROUP BY 1 ORDER BY 1`, [PERSON_EPSILON_CAP]);
+    res.json({
+      network: NETWORK, asset: USDC, payTo,
+      totals: { answers: totals.answers, paidByAgentsMicro: totals.paid, paidToPeopleMicro: totals.to_people },
+      pool: { ...pool, minGroup: MIN_GROUP, epsilonCap: PERSON_EPSILON_CAP, budgetHistogram: budget.rows },
+      audit: opts.audit?.topicId ? { topicId: opts.audit.topicId, account: opts.audit.account ?? null } : null,
+      refusals: "Refused questions are turned away before payment and are never charged, so they leave no record here.",
+      queries: recent.rows.map(q => ({
+        id: q.id, at: q.created_at.toISOString(), route: q.route === "pattern" ? (q.result?.sealedReads ? "sealed_ai" : "saved_labels") : "plain_math",
+        question: q.spec, answer: q.result?.answer ?? { value: q.result?.value, unit: q.result?.unit, plusMinus95: q.result?.plusMinus95 },
+        peopleAbout: q.result?.peopleAbout ?? null, epsilon: q.epsilon, priceMicro: q.price_micro, sealedReads: q.reads,
+        paymentTx: q.payment_tx, hashscan: q.payment_tx ? hashscanUrl(q.payment_tx) : null,
+      })),
+    });
   });
 
   app.get("/proof/agent", async (req, res) => {

@@ -8,7 +8,8 @@ import { isGroup, type Group } from "../pool/metrics.js";
 import { balanceMicro, claim, MIN_CLAIM_MICRO, type PayoutChain } from "../pool/payouts.js";
 import { PERSON_EPSILON_CAP } from "../pool/privacy.js";
 import { Refused } from "../pool/query.js";
-import { activeGrant, createContributor, iso, setGrant, today, withdraw } from "../pool/store.js";
+import { activeGrant, addDays, createContributor, iso, personKey, setGrant, today, withdraw } from "../pool/store.js";
+import { openRecord } from "../pool/crypto.js";
 import { hashscanUrl } from "../x402/server.js";
 import { ATTEMPT_TTL_S } from "../world/oidc.js";
 import { newPkce } from "../ultrahuman/client.js";
@@ -105,14 +106,22 @@ export function createContributorApi(db: Db, kek: Buffer, deps: { identity: Iden
       "UPDATE auth_attempts SET status = 'used' WHERE state = $1 AND status = 'pending' RETURNING *", [state]);
     const row = rows[0];
     if (!row) return void res.status(400).json({ error: "unknown_or_used_attempt" });
-    if (Date.now() / 1000 > row.created_at + ATTEMPT_TTL_S) return void res.status(400).json({ error: "attempt_expired" });
+    // From here the attempt is known, so failures go back to the app, which shows what happened and that nothing was collected.
+    const back = (check: string, reason?: string) => {
+      const u = new URL(row.return_to, appUrl);
+      u.searchParams.set("check", check);
+      if (reason) u.searchParams.set("reason", reason);
+      res.redirect(302, u.toString());
+    };
+    if (Date.now() / 1000 > row.created_at + ATTEMPT_TTL_S) return back("expired");
     const attempt: Attempt = { state, nonce: row.nonce, verifier: row.verifier, createdAt: row.created_at, fresh: true, expectedIss: row.expected_iss, expectedSub: row.expected_sub };
 
     let proof;
     try {
       proof = await identity.finish(new URL(req.originalUrl, deps.baseUrl), attempt);
     } catch (e) {
-      return void res.status(403).json({ error: "check_failed", reason: String((e as Error)?.message ?? e).slice(0, 80) });
+      const reason = String((e as Error)?.message ?? e).slice(0, 60);
+      return back(/expired|not_fresh/.test(reason) ? "expired" : /access_denied|cancel/.test(reason) ? "cancelled" : "failed", reason);
     }
 
     // One (iss, sub), one contributor. A first check creates the person; later checks find them.
@@ -165,6 +174,25 @@ export function createContributorApi(db: Db, kek: Buffer, deps: { identity: Iden
     });
   });
 
+  /** The person's own last 30 nights, for their own chart. Only ever returned to them. */
+  r.get("/me/nights", requireSession, async (req: AuthedReq, res) => {
+    const id = req.session!.contributorId;
+    const key = await personKey(db, kek, id).catch(() => null);
+    if (!key) return void res.json({ nights: [] });
+    const { rows } = await db.query<{ day: Date; grp: string; iv: Uint8Array; blob: Uint8Array }>(
+      "SELECT day, grp, iv, blob FROM records WHERE contributor_id = $1 AND grp IN ('sleep', 'hrv') AND day > $2::date ORDER BY day", [id, addDays(today(), -31)]);
+    const byDay = new Map<string, { day: string; sleepMinutes?: number; hrvMs?: number }>();
+    for (const r of rows) {
+      const day = iso(r.day);
+      const v = openRecord(key, id, day, r.grp, r.iv, r.blob);
+      const n = byDay.get(day) ?? { day };
+      if (r.grp === "sleep") n.sleepMinutes = v.total_sleep_minutes;
+      if (r.grp === "hrv") n.hrvMs = v.hrv_rmssd_ms;
+      byDay.set(day, n);
+    }
+    res.json({ nights: [...byDay.values()] });
+  });
+
   r.get("/me/grant", requireSession, async (req: AuthedReq, res) => {
     const g = await activeGrant(db, req.session!.contributorId);
     res.json({ grant: g && grantView(g) });
@@ -213,7 +241,7 @@ export function createContributorApi(db: Db, kek: Buffer, deps: { identity: Iden
         ORDER BY q.created_at DESC LIMIT 100`, [req.session!.contributorId]);
     res.json({
       items: rows.map(r => ({
-        queryId: r.id, at: r.created_at.toISOString(), route: r.spec.route, metric: r.spec.metric, stat: r.spec.stat, threshold: r.spec.threshold ?? null,
+        queryId: r.id, at: r.created_at.toISOString(), route: r.spec.route, metric: r.spec.metric, stat: r.spec.stat, threshold: r.spec.threshold ?? null, template: r.spec.template ?? null,
         from: r.spec.from, to: r.spec.to, answer: { value: r.result.value, plusMinus95: r.result.plusMinus95, unit: r.result.unit },
         peopleAbout: r.result.peopleAbout, yourDays: r.days, epsilon: r.epsilon, earnedMicro: r.earned ?? "0",
       })),
