@@ -46,7 +46,8 @@ let rpcId = 0;
 async function rpc(accessToken: string, method: string, params: unknown) {
   const r = await fetch(MCP_URL, { method: "POST", headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-06-18" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }) });
   const text = await r.text();
-  if (r.status === 429) throw Object.assign(new Error("rate_limited"), { retryAfter: r.headers.get("retry-after") });
+  if (r.status === 429) throw Object.assign(new Error("rate_limited"), { status: 429, retryAfter: r.headers.get("retry-after") });
+  if (r.status === 401) throw Object.assign(new Error("unauthorized"), { status: 401 });
   if (!r.ok) throw new Error(`mcp ${r.status}: ${text.slice(0, 200)}`);
   const json = text.startsWith("{") ? text : (text.split("\n").find((l) => l.startsWith("data:")) ?? "").slice(5);
   const msg = JSON.parse(json);

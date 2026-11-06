@@ -124,3 +124,35 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at     timestamptz NOT NULL,
   created_at     timestamptz NOT NULL DEFAULT now()
 );
+
+-- Small settings that must survive restarts, such as the Ultrahuman client id registered for this deployment.
+CREATE TABLE IF NOT EXISTS app_config (
+  key   text PRIMARY KEY,
+  value text NOT NULL
+);
+
+-- One data source per person: their Ultrahuman ring, or labelled sample data. Tokens are sealed with the
+-- person's own key. last_sync holds counts per group, never values.
+CREATE TABLE IF NOT EXISTS connections (
+  contributor_id uuid PRIMARY KEY REFERENCES contributors(id) ON DELETE CASCADE,
+  source         text NOT NULL CHECK (source IN ('ultrahuman', 'sample')),
+  client_id      text,
+  tokens_iv      bytea,
+  tokens_blob    bytea,
+  expires_at     timestamptz,
+  status         text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'needs_reconnect')),
+  last_sync_at   timestamptz,
+  last_sync      jsonb,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+-- An Ultrahuman authorization in flight: PKCE verifier, bound to the browser and the signed-in person, used once.
+CREATE TABLE IF NOT EXISTS ring_attempts (
+  state          text PRIMARY KEY,
+  contributor_id uuid NOT NULL REFERENCES contributors(id) ON DELETE CASCADE,
+  client_id      text NOT NULL,
+  verifier       text NOT NULL,
+  return_to      text NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  status         text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'used'))
+);

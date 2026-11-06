@@ -36,6 +36,15 @@ export function unwrapPersonKey(kek: Buffer, personId: string, wrapped: Uint8Arr
   return open(kek, w.subarray(0, 12), w.subarray(12), `key:${personId}`);
 }
 
+/** OAuth tokens for the person's ring, sealed with their own key: withdrawal destroys them with everything else. */
+export function sealTokens(key: Buffer, personId: string, tokens: object) {
+  return seal(key, Buffer.from(JSON.stringify(tokens)), `conn:${personId}`);
+}
+
+export function openTokens<T>(key: Buffer, personId: string, iv: Uint8Array, blob: Uint8Array): T {
+  return JSON.parse(open(key, iv, blob, `conn:${personId}`).toString("utf8"));
+}
+
 const recordAad = (personId: string, day: string, grp: string) => `rec:${personId}:${day}:${grp}`;
 
 export function sealRecord(key: Buffer, personId: string, day: string, grp: string, values: Record<string, number>) {
