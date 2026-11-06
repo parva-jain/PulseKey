@@ -79,6 +79,10 @@ test("connect refuses another browser's callback, reuse, and a denied consent", 
   assert.equal(new URL(denied.headers.get("location")!).searchParams.get("ring"), "denied");
   b.jar.set("pk_ring", state);
   assert.equal((await b.go(`/api/ring/callback?state=${state}&code=good-code`)).status, 400, "single use");
+
+  const s2 = new URL((await b.go("/api/ring/connect")).headers.get("location")!).searchParams.get("state")!;
+  const mixed = await b.go(`/api/ring/callback?state=${s2}&code=good-code&iss=https://evil.example`);
+  assert.equal(new URL(mixed.headers.get("location")!).searchParams.get("ring"), "error", "a code from another issuer is not redeemed");
   assert.equal((await (await b.go("/api/ring")).json()).connection, null);
 });
 

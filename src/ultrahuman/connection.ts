@@ -8,6 +8,7 @@ import { personKey } from "../pool/store.js";
 import { authorizeUrl, callTool, exchangeCode, refreshTokens, registerClient, revokeToken, rowsOf, type Tokens } from "./client.js";
 
 export const RING_SCOPE = "sleep:read cardio:read";
+export const RING_ISSUER = "https://api.ultrahuman.com"; // sent back as ?iss= on the callback (RFC 9207)
 const REFRESH_EARLY_MS = 5 * 60_000;
 
 /** Everything the app needs from Ultrahuman. The real client in production, a fake in tests. */

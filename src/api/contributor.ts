@@ -12,7 +12,7 @@ import { activeGrant, createContributor, iso, setGrant, today, withdraw } from "
 import { hashscanUrl } from "../x402/server.js";
 import { ATTEMPT_TTL_S } from "../world/oidc.js";
 import { newPkce } from "../ultrahuman/client.js";
-import { connectRing, connectSample, disconnect, getConnection, ringClientId, type RingApi } from "../ultrahuman/connection.js";
+import { connectRing, connectSample, disconnect, getConnection, RING_ISSUER, ringClientId, type RingApi } from "../ultrahuman/connection.js";
 import { syncPerson } from "../ultrahuman/sync.js";
 
 const SESSION_COOKIE = "pk_session";
@@ -285,6 +285,8 @@ export function createContributorApi(db: Db, kek: Buffer, deps: { identity: Iden
     };
     const code = typeof req.query.code === "string" ? req.query.code : "";
     if (req.query.error || !code) return back("denied");
+    // A code from a different authorization server must never be redeemed here (mix-up attack).
+    if (req.query.iss !== undefined && req.query.iss !== RING_ISSUER) return back("error");
     let tokens;
     try {
       tokens = await ring.exchange({ clientId: row.client_id, redirectUri: ringRedirect, code, verifier: row.verifier });
