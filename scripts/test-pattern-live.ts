@@ -11,7 +11,8 @@ const { createApi } = await import("../src/api/app.js");
 const { zgModel } = await import("../src/ai/model.js");
 const { seedPool, syntheticPerson } = await import("../src/pool/seed.js");
 const { addDays, createContributor, setGrant, storeRows, today } = await import("../src/pool/store.js");
-const { buildPayingFetch, runAgent } = await import("../src/x402/agent.js");
+const { buildPayingFetch, openSpendLog, runAgent } = await import("../src/x402/agent.js");
+const { USDC_TESTNET } = await import("../src/hedera/accounts.js");
 const { todaysBrief } = await import("../src/pool/brief.js");
 const { hashscanUrl } = await import("../src/x402/server.js");
 
@@ -39,8 +40,11 @@ async function truthShare(spec: unknown, q: keyof typeof TRUTH) {
 const server = createApi(db, kek, new HTTPFacilitatorClient({ url: FAC, timeoutMs: 60_000 }), { baseUrl: BASE, payTo, model }).listen(PORT);
 
 const key = PrivateKey.fromStringECDSA(process.env.BUYER_PRIVATE_KEY!);
-const session = { spent: 0n };
-const payFetch = (pid: string) => buildPayingFetch({ accountId: buyer, key, maxSpendMicro: 2_000_000n, session, allowPayTo: [payTo], paymentId: () => pid }) as typeof fetch;
+// Every payment goes through the agent's public spending log, so reconciliation has nothing unlogged to flag.
+const policy = { asset: USDC_TESTNET, maxSessionMicro: "5000000", maxPerPaymentMicro: "5000000", allowPayTo: [payTo] };
+const audit = await openSpendLog(buyer, key, policy);
+const session = { spent: audit?.spent ?? 0n };
+const payFetch = (pid: string) => buildPayingFetch({ accountId: buyer, key, maxSpendMicro: BigInt(policy.maxSessionMicro), session, allowPayTo: [payTo], paymentId: () => pid, audit: audit?.log }) as typeof fetch;
 const ask = { why: "Does HRV fall the night before short sleep?", spec: { route: "pattern", template: { id: "lead_lag_v1", leading: "hrv_ms", leadDirection: "falls", outcome: "sleep_minutes", outcomeDirection: "falls", lagNights: 1 }, from: day(60), to: day(1) }, maxPriceMicro: 1_000_000n };
 // The coach's question. The demo pool plants it in about 40% of people, and the reverse in about 20%.
 const reverse = { why: "Does HRV drop the night after short sleep?", spec: { ...ask.spec, template: { ...ask.spec.template, leading: "sleep_minutes", outcome: "hrv_ms" } }, maxPriceMicro: 1_000_000n };
@@ -49,7 +53,12 @@ try {
   for (const [round, q] of [["route3_sealed_read", ask], ["route2_saved_labels", ask], ["route3_reverse_direction", reverse]] as const) {
     const truthYesPct = await truthShare(q.spec, q === ask ? "hrv_then_sleep" : "sleep_then_hrv");
     const t0 = Date.now();
-    const [r] = await runAgent(BASE, payFetch, [q]) as any[];
+    const [r] = await runAgent(BASE, payFetch, [q], console.log, audit?.log) as any[];
+    if (r.answer?.queryId) {
+      // The public proof page for this query, as a judge would open it.
+      const html = await (await fetch(`${BASE}/proof/queries/${r.answer.queryId}`, { headers: { accept: "text/html" } })).text();
+      writeFileSync(`test-results/proof-${round}.html`, html);
+    }
     log(round, {
       ms: Date.now() - t0, truthYesPct, quoteRoute: r.quote?.route, price: r.quote?.priceUsd, skipped: r.skipped,
       answer: r.answer && { ...r.answer.answer, peopleAbout: r.answer.peopleAbout, sealedReads: r.answer.sealedReads, labelsReused: r.answer.labelsReused, syntheticShare: r.answer.syntheticShare },
