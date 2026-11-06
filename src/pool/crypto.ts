@@ -45,6 +45,15 @@ export function openTokens<T>(key: Buffer, personId: string, iv: Uint8Array, blo
   return JSON.parse(open(key, iv, blob, `conn:${personId}`).toString("utf8"));
 }
 
+/** Any small derived value about one person (a saved label, a brief), sealed with their key under a purpose string. */
+export function sealJson(key: Buffer, aad: string, value: unknown) {
+  return seal(key, Buffer.from(JSON.stringify(value)), aad);
+}
+
+export function openJson<T>(key: Buffer, aad: string, iv: Uint8Array, blob: Uint8Array): T {
+  return JSON.parse(open(key, iv, blob, aad).toString("utf8"));
+}
+
 const recordAad = (personId: string, day: string, grp: string) => `rec:${personId}:${day}:${grp}`;
 
 export function sealRecord(key: Buffer, personId: string, day: string, grp: string, values: Record<string, number>) {

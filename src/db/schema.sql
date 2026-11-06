@@ -156,3 +156,36 @@ CREATE TABLE IF NOT EXISTS ring_attempts (
   created_at     timestamptz NOT NULL DEFAULT now(),
   status         text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'used'))
 );
+
+-- One person's answer to one pattern question over one date range, from one sealed read. Sealed with their key:
+-- it is a fact about their health. Reused when the same question and range come again, so no new read is needed.
+CREATE TABLE IF NOT EXISTS labels (
+  contributor_id uuid NOT NULL REFERENCES contributors(id) ON DELETE CASCADE,
+  question_hash  text NOT NULL,
+  from_day       date NOT NULL,
+  to_day         date NOT NULL,
+  iv             bytea NOT NULL,
+  blob           bytea NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (contributor_id, question_hash, from_day, to_day)
+);
+
+-- Things written for one person about their own data (the daily brief). Sealed with their key.
+CREATE TABLE IF NOT EXISTS personal_insights (
+  contributor_id uuid NOT NULL REFERENCES contributors(id) ON DELETE CASCADE,
+  ref            text NOT NULL,
+  iv             bytea NOT NULL,
+  blob           bytea NOT NULL,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (contributor_id, ref)
+);
+
+-- Proof that a query's reads ran sealed: request ids and providers, with no person id, stored in shuffled order.
+CREATE TABLE IF NOT EXISTS inference_calls (
+  id          bigserial PRIMARY KEY,
+  query_id    uuid REFERENCES queries(id),
+  request_id  text,
+  provider    text,
+  model       text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);

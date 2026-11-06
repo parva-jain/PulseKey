@@ -78,6 +78,8 @@ export async function withdraw(db: Db, personId: string) {
     await tx.query("DELETE FROM contributor_keys WHERE contributor_id = $1", [personId]);
     await tx.query("UPDATE grants SET status = 'revoked' WHERE contributor_id = $1", [personId]);
     await tx.query("DELETE FROM records WHERE contributor_id = $1", [personId]);
+    await tx.query("DELETE FROM labels WHERE contributor_id = $1", [personId]);
+    await tx.query("DELETE FROM personal_insights WHERE contributor_id = $1", [personId]);
   });
 }
 

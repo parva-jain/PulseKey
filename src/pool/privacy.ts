@@ -46,3 +46,24 @@ export function splitByDays(poolMicro: bigint, days: Map<string, number>) {
   }
   return new Map(rows.map(r => [r.id, r.amt]));
 }
+
+export type Tally = { yes: number; no: number; unclear: number };
+
+/**
+ * A three-way count with discrete Laplace noise per cell. One person changing their answer moves two cells,
+ * so the release costs 2 * epsCell. The group size m is already public, so the noisy cells are projected back
+ * onto it and clipped at zero. Only the noisy shares leave this function.
+ */
+export function releaseHistogram(t: Tally, epsCell: number) {
+  const m = t.yes + t.no + t.unclear;
+  const noisy = [t.yes, t.no, t.unclear].map(v => v + discreteLaplace(epsCell));
+  const adj = (m - noisy.reduce((a, b) => a + b, 0)) / 3;
+  let z = noisy.map(v => Math.max(0, v + adj));
+  const tot = z.reduce((a, b) => a + b, 0) || 1;
+  z = z.map(v => (v * m) / tot);
+  const pct = z.map(v => Math.round((100 * v) / m)); // shares of the group, in whole percent
+  const label = z.map((v, i) => (v < 5 ? "fewer than 5 people" : pct[i] >= 90 ? "more than 90%" : `about ${Math.round(pct[i] / 5) * 5}%`));
+  // 95% half-width of one noisy cell, as a share of the group
+  const plusMinus95 = Math.round((100 * laplace95(1 / epsCell)) / m);
+  return { yesPct: pct[0], noPct: pct[1], unclearPct: pct[2], label: { yes: label[0], no: label[1], unclear: label[2] }, plusMinus95 };
+}
