@@ -7,11 +7,14 @@
     "test": "tsx --test scripts/test-pool.ts scripts/test-query.ts scripts/test-payouts.ts scripts/test-contributor-api.ts scripts/test-ring.ts scripts/test-pattern.ts scripts/test-eval.ts scripts/test-proof.ts",
     "serve": "tsx --env-file=.env scripts/serve.ts",
     "eval": "tsx --env-file=.env scripts/eval-classifier.ts",
-    "reseed": "tsx --env-file=.env scripts/reseed.ts"
+    "reseed": "tsx --env-file=.env scripts/reseed.ts",
+    "web:dev": "vite --config web/vite.config.ts",
+    "web:build": "vite build --config web/vite.config.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.16",
     "@hiero-ledger/sdk": "2.90.1",
+    "@noble/curves": "1.6.0",
     "@x402/core": "2.30.0",
     "@x402/express": "2.30.0",
     "@x402/extensions": "2.30.0",
@@ -19,12 +22,22 @@
     "@x402/hedera": "2.30.0",
     "express": "^5.3.0",
     "openai": "4.104.0",
-    "openid-client": "6.8.9"
+    "openid-client": "6.8.9",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.28.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "26.6.6",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.49",
+    "tailwindcss": "3.4.15",
     "tsx": "4.23.15",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vite": "5.4.11"
   }
 }
