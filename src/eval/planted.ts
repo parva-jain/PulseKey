@@ -2,7 +2,8 @@
 // Four groups: short nights pull next-day HRV down; HRV dips come before short nights; both happen but
 // unrelated; neither happens. Truth labels live here and never reach the pipeline or the model.
 import type { Answer, Template } from "../pool/pattern.js";
-import { rng } from "../pool/seed.js";
+import type { Group } from "../pool/metrics.js";
+import { rng } from "../pool/rng.js";
 import { addDays } from "../pool/store.js";
 
 export const COHORTS = ["sleep_leads_hrv", "hrv_leads_sleep", "independent_events", "no_events"] as const;
@@ -116,4 +117,55 @@ function wilson(k: number, n: number) {
   const c = (p + (z * z) / (2 * n)) / (1 + (z * z) / n);
   const h = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / (1 + (z * z) / n);
   return [Number((c - h).toFixed(3)), Number((c + h).toFixed(3))];
+}
+
+/** The demo pool's mix: the coach's question ("HRV drops after short sleep") is true for 40%, its reverse for 20%. */
+export const DEMO_MIX: [Cohort, number][] = [["sleep_leads_hrv", 0.4], ["hrv_leads_sleep", 0.2], ["independent_events", 0.2], ["no_events", 0.2]];
+
+export function pickCohort(roll: number, mix = DEMO_MIX): Cohort {
+  let acc = 0;
+  for (const [c, p] of mix) if (roll < (acc += p)) return c;
+  return mix[mix.length - 1][0];
+}
+
+type Rows = Record<Group, Record<string, unknown>[]>;
+
+/**
+ * Plants a cohort's events on full Ultrahuman-shaped rows (from syntheticPerson), in place. A short night lowers
+ * total sleep with its stages and score; an HRV dip lowers HRV and, with it, recovery. Missing days stay missing.
+ */
+export function plantEvents(rows: Rows, cohort: Cohort, from: string, to: string, seed: number, s: Strength = CLEAR) {
+  if (cohort === "no_events") return rows;
+  const g = rng(seed);
+  const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+  const n = Math.max(s.events, Math.round(days / 10));
+  const at = (grp: Group) => new Map(rows[grp].map(r => [String(r.date), r]));
+  const sleep = at("sleep"), hrv = at("hrv"), recovery = at("recovery");
+  const shorten = (i: number) => {
+    const r = sleep.get(addDays(from, i)) as Record<string, number> | undefined;
+    if (!r) return;
+    const loss = s.sleepLossMin[0] + g.next() * (s.sleepLossMin[1] - s.sleepLossMin[0]);
+    const total = Math.max(150, r.total_sleep_minutes - loss), f = total / r.total_sleep_minutes;
+    r.deep_sleep_minutes = Math.round(r.deep_sleep_minutes * f);
+    r.rem_sleep_minutes = Math.round(r.rem_sleep_minutes * f);
+    r.light_sleep_minutes = Math.round(total) - r.deep_sleep_minutes - r.rem_sleep_minutes;
+    r.sleep_score = Math.round(Math.min(99, Math.max(20, r.sleep_score - (r.total_sleep_minutes - total) / 6)));
+    r.total_sleep_minutes = Math.round(total);
+  };
+  const dip = (i: number) => {
+    const r = hrv.get(addDays(from, i)) as Record<string, number> | undefined;
+    if (!r) return;
+    const before = r.hrv_rmssd_ms;
+    r.hrv_rmssd_ms = Number(Math.max(8, before * (s.hrvFactor[0] + g.next() * (s.hrvFactor[1] - s.hrvFactor[0]))).toFixed(1));
+    const rec = recovery.get(addDays(from, i)) as Record<string, number> | undefined;
+    if (rec) rec.recovery_score = Math.round(Math.max(5, rec.recovery_score - 0.6 * (before - r.hrv_rmssd_ms)));
+  };
+  const ev = eventNights(g, days, n);
+  if (cohort === "sleep_leads_hrv") for (const e of ev) { shorten(e); dip(e + 1); }
+  if (cohort === "hrv_leads_sleep") for (const e of ev) { dip(e); shorten(e + 1); }
+  if (cohort === "independent_events") {
+    for (const e of ev) shorten(e);
+    for (const e of eventNights(g, days, n, new Set(ev.flatMap(e => [e - 1, e, e + 1])))) dip(e);
+  }
+  return rows;
 }

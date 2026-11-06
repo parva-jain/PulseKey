@@ -1,22 +1,14 @@
-// seed: labelled synthetic people in the exact row shape Ultrahuman's tools return.
-// Planted effects, so accuracy can be measured later: a short night lowers next-day HRV and recovery
-// and raises resting HR; weekends sleep longer. Values are fake and marked kind='seed'.
+// seed: labelled synthetic people in the exact row shape Ultrahuman's tools return. Everyday structure: a short
+// night slightly lowers next-day HRV and recovery and raises resting HR; weekends sleep longer. On top, each
+// demo person gets a planted cohort (eval/planted.ts) whose truth goes to seed_truth, which no query reads.
+// Values are fake and marked kind='seed'.
 import type { Db } from "../db/index.js";
 import type { Group } from "./metrics.js";
 import { addDays, createContributor, setGrant, storeRows } from "./store.js";
+import { rng } from "./rng.js";
+import { pickCohort, plantEvents } from "../eval/planted.js";
 
-export function rng(seed: number) {
-  let a = seed >>> 0;
-  const next = () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  const normal = (mu = 0, sd = 1) => mu + sd * Math.sqrt(-2 * Math.log(1 - next())) * Math.cos(2 * Math.PI * next());
-  return { next, normal };
-}
+export { rng } from "./rng.js";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const r = (v: number, dp = 0) => Number(v.toFixed(dp));
@@ -59,6 +51,8 @@ const ALL: Group[] = ["sleep", "hrv", "resting_hr", "recovery"];
 /** Most seed people grant everything; some grant subsets, so eligibility genuinely varies by query. */
 export async function seedPool(db: Db, kek: Buffer, opts: { people: number; days: number; seed?: number; on: string }) {
   const g = rng(opts.seed ?? 42);
+  const mix = rng((opts.seed ?? 42) * 7919); // a separate stream, so grants stay as they were before cohorts existed
+  const from = addDays(opts.on, -opts.days), to = addDays(opts.on, -1);
   const ids: string[] = [];
   for (let i = 0; i < opts.people; i++) {
     const roll = g.next();
@@ -66,8 +60,10 @@ export async function seedPool(db: Db, kek: Buffer, opts: { people: number; days
     const historyDays = Math.round(opts.days * (0.5 + 0.5 * g.next()));
     const id = await createContributor(db, kek, "seed");
     await setGrant(db, id, { groups, historyDays, validDays: 30 }, opts.on);
-    const rows = syntheticPerson((opts.seed ?? 42) * 1000 + i, addDays(opts.on, -opts.days), addDays(opts.on, -1));
+    const cohort = pickCohort(mix.next());
+    const rows = plantEvents(syntheticPerson((opts.seed ?? 42) * 1000 + i, from, to), cohort, from, to, (opts.seed ?? 42) * 1000 + i + 1);
     for (const grp of groups) await storeRows(db, kek, id, grp, rows[grp], opts.on);
+    await db.query("INSERT INTO seed_truth (contributor_id, cohort) VALUES ($1, $2)", [id, cohort]);
     ids.push(id);
   }
   return ids;

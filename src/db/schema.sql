@@ -189,3 +189,9 @@ CREATE TABLE IF NOT EXISTS inference_calls (
   model       text NOT NULL,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- Which planted pattern each seed person carries, for checking demo answers. No query, prompt or price reads it.
+CREATE TABLE IF NOT EXISTS seed_truth (
+  contributor_id uuid PRIMARY KEY REFERENCES contributors(id) ON DELETE CASCADE,
+  cohort         text NOT NULL
+);
