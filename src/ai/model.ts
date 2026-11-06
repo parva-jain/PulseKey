@@ -2,7 +2,15 @@
 // in production; "off" when 0G is unavailable, which makes every AI feature report itself unavailable. There is
 // deliberately no fallback to an ordinary model: health data only ever goes to the sealed path.
 import type OpenAI from "openai";
-import { createZg, sealedChat, ZG_MODEL } from "../zg/sealed.js";
+import { createZg, NotSealedError, sealedChat, ZG_MODEL } from "../zg/sealed.js";
+
+const RETRIES = 3;
+/** Dropped connections, rate limits and 5xx are worth another try. An unsealed reply never is. */
+const transient = (e: unknown) => {
+  if (e instanceof NotSealedError) return false;
+  const status = (e as { status?: number }).status;
+  return status === undefined ? /connection|timeout|ECONNRESET|socket|fetch failed/i.test(String((e as Error)?.message)) : status === 429 || status >= 500;
+};
 
 export type SealedReply = { content: string; requestId: string | null; provider: string | null; model: string; costMicroUsd: number | null };
 
@@ -28,7 +36,16 @@ export function zgModel(): SealedModel {
     name: "0g",
     async chat(req) {
       const { thinking, ...body } = req;
-      const r = await sealedChat(zg, { ...body, chat_template_kwargs: { enable_thinking: !!thinking } });
+      let r;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          r = await sealedChat(zg, { ...body, chat_template_kwargs: { enable_thinking: !!thinking } });
+          break;
+        } catch (e) {
+          if (attempt >= RETRIES || !transient(e)) throw e;
+          await new Promise(res => setTimeout(res, 500 * 2 ** attempt + Math.random() * 250));
+        }
+      }
       return { content: r.content, requestId: r.requestId, provider: r.provider, model: ZG_MODEL, costMicroUsd: r.costMicroUsd === null ? null : Number(r.costMicroUsd) };
     },
   };
